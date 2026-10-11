@@ -691,6 +691,11 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
       h.textContent = token ? "Ese código no tiene el formato de GitHub: debe empezar por ghp_ y tener unos 40 caracteres. Pulsa «Ver» para revisarlo." : "Pega aquí el código de GitHub.";
       h.classList.add("err"); return false;
     }
+    if(/^gh[pousr]_/.test(token) && token.length !== 40){
+      const d = 40 - token.length;
+      h.textContent = `El código que has pegado tiene ${token.length} caracteres y uno de GitHub tiene 40: ${d>0 ? `le ${d===1?"falta 1":"faltan "+d}` : `le ${-d===1?"sobra 1":"sobran "+(-d)}`}. Cópialo de nuevo desde tu otro dispositivo con «Copiar código» o usa el QR.`;
+      h.classList.add("err"); return false;
+    }
     const btn = $("#connect"); btn.disabled = true; h.textContent = "Conectando…";
     try{
       const user = await gh("/user", {}, token);
