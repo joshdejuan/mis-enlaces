@@ -123,6 +123,10 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:99px;font-size:14px;font-weight:500;opacity:0;pointer-events:none;transition:.2s;max-width:calc(100% - 32px);z-index:9}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
 
+select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px 12px;width:100%;min-width:0}
+.ttl{display:inline-flex;align-items:center;gap:4px;font-family:var(--f-mono);font-size:11px;color:var(--danger);white-space:nowrap}
+.ttl svg{width:13px;height:13px;flex:none}
+
 /* Sincronización */
 .syncbtn .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .syncbtn[data-state="ok"] .dot{background:var(--ok)}
@@ -234,6 +238,17 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
         <input id="n" type="text" placeholder="Por qué lo guardas">
       </div>
     </div>
+    <div class="field">
+      <label for="ttl">Autodestrucción</label>
+      <select id="ttl">
+        <option value="">Nunca</option>
+        <option value="burn">Al copiarlo o compartirlo una vez</option>
+        <option value="3600000">En 1 hora</option>
+        <option value="86400000">En 24 horas</option>
+        <option value="604800000">En 7 días</option>
+        <option value="2592000000">En 30 días</option>
+      </select>
+    </div>
     <div class="add-foot">
       <span class="hint" id="hint">Pega un enlace y verás su vista previa.</span>
       <button class="btn primary" type="submit">
@@ -271,7 +286,7 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
 
   const EXAMPLES = [
     {id:"ex1",url:"https://es.wikipedia.org/wiki/Monasterio_de_El_Escorial",note:"Ejemplo: prueba «Copiar» o «Compartir». Los ejemplos desaparecen al guardar lo primero.",createdAt:Date.now()-864e5,example:true},
-    {id:"ex3",type:"text",title:"Mi dirección",text:"Calle Floridablanca 12, 2.º B\n28200 San Lorenzo de El Escorial (Madrid)",createdAt:Date.now()-1.5*864e5,example:true},
+    {id:"ex3",type:"text",title:"Mi dirección",expiresAt:Date.now()+5*36e5,text:"Calle Floridablanca 12, 2.º B\n28200 San Lorenzo de El Escorial (Madrid)",createdAt:Date.now()-1.5*864e5,example:true},
     {id:"ex2",url:"https://github.com/mdn/content",note:"Ejemplo: repositorio de código.",createdAt:Date.now()-2*864e5,example:true},
   ];
 
@@ -355,6 +370,43 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
     }
     if(ok){ toast(label||"Copiado"); btn?.classList.add("done"); setTimeout(()=>btn?.classList.remove("done"),1200) }
     else toast("No se pudo copiar. Selecciona el texto y cópialo a mano.");
+    return ok;
+  }
+
+  // ---------- autodestrucción ----------
+  const CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 2h6"/></svg>';
+  function ttlFields(now){
+    const v = $("#ttl").value;
+    if(v === "burn") return {burn:true};
+    const ms = Number(v); return ms > 0 ? {expiresAt: now + ms} : {};
+  }
+  const importTtl = d => ({...(d?.burn ? {burn:true} : {}), ...(Number(d?.expiresAt) > Date.now() ? {expiresAt:Number(d.expiresAt)} : {})});
+  function left(ms){
+    const m = Math.max(1, Math.ceil(ms/60000));
+    if(m < 60) return `${m} min`;
+    const h = Math.round(m/60); if(h < 48) return `${h} h`;
+    return `${Math.round(h/24)} días`;
+  }
+  function ttlBadge(l){
+    if(l.burn) return `<span class="ttl" title="Se borrará en cuanto lo copies o lo compartas">${CLOCK}Se borra al usarlo</span>`;
+    if(l.expiresAt){
+      const at = new Date(l.expiresAt).toLocaleString("es-ES",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"});
+      return `<span class="ttl" title="Se borrará el ${at}">${CLOCK}Se borra en ${left(l.expiresAt - Date.now())}</span>`;
+    }
+    return "";
+  }
+  const tomb = l => ({id:l.id, deleted:true, createdAt:l.createdAt, updatedAt:Date.now()});
+  function burnIfNeeded(l){
+    if(!l.burn || l.example || l.deleted) return false;
+    links = links.map(x => x.id===l.id ? tomb(x) : x);
+    if(openShare===l.id) openShare = null;
+    save(); render(); return true;
+  }
+  function purgeExpired(){
+    const now = Date.now(); let n = 0;
+    links = links.map(l => { if(!l.deleted && l.expiresAt && l.expiresAt <= now){ n++; return tomb(l) } return l });
+    if(n) save();
+    return n;
   }
 
   // ---------- render ----------
@@ -385,7 +437,7 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
   }
   function panels(l){
     return `${openShare===l.id?`<div class="share">
-        <div class="share-row">${shareTargets(l).map(([n,h])=>`<a class="btn" href="${esc(h)}" target="_blank" rel="noopener noreferrer">${n}</a>`).join("")}
+        <div class="share-row">${shareTargets(l).map(([n,h])=>`<a class="btn" href="${esc(h)}" target="_blank" rel="noopener noreferrer" data-act="sharelink">${n}</a>`).join("")}
           <button class="btn primary" data-act="copymsg" style="padding:7px 12px">${ICON.copy}Copiar mensaje</button></div>
         <div class="msg">${esc(shareText(l))}</div></div>`:""}
       ${openDel===l.id?`<div class="confirm">¿Borrar ${isText(l)?"este texto":"este enlace"}?
@@ -396,7 +448,7 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
     const full = expanded.has(l.id);
     return `<article class="card text" data-id="${esc(l.id)}">
       <div class="meta">
-        <div class="domain"><span class="tag">Texto</span>${l.example?'<span class="ex">Ejemplo</span>':""}</div>
+        <div class="domain"><span class="tag">Texto</span>${ttlBadge(l)}${l.example?'<span class="ex">Ejemplo</span>':""}</div>
         ${l.title?`<h2 class="title">${esc(l.title)}</h2>`:""}
         <div class="snippet${full?" full":""}">${esc(l.text)}</div>
         ${long?`<button class="more" data-act="more">${full?"Ver menos":"Ver todo"}</button>`:""}
@@ -415,7 +467,7 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
     return `<article class="card" data-id="${esc(l.id)}">
       ${thumbHTML(u, pv, {href:l.url, loading: !pv && !l.noPreview})}
       <div class="meta">
-        <div class="domain">${logoHTML(pv)}<b>${esc(pv?.publisher || host(u))}</b>${l.example?'<span class="ex">Ejemplo</span>':""}</div>
+        <div class="domain">${logoHTML(pv)}<b>${esc(pv?.publisher || host(u))}</b>${ttlBadge(l)}${l.example?'<span class="ex">Ejemplo</span>':""}</div>
         <h2 class="title"><a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${esc(titleOf(l))}</a></h2>
         ${pv?.description?`<p class="desc">${esc(pv.description)}</p>`:""}
         ${l.note?`<p class="note">${esc(l.note)}</p>`:""}
@@ -516,7 +568,7 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
       const text = $("#body").value.replace(/\s+$/,"");
       if(!text.trim()) return err("Escribe o pega el texto que quieres guardar.", $("#body"));
       const now = Date.now();
-      links.unshift({id:newId(), type:"text", text, title:$("#t").value.trim(), createdAt:now, updatedAt:now});
+      links.unshift({id:newId(), type:"text", text, title:$("#t").value.trim(), createdAt:now, updatedAt:now, ...ttlFields(now)});
       $("#body").value = ""; $("#t").value = "";
       toast("Texto guardado");
     } else {
@@ -525,10 +577,12 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
       if(alive().some(l=>!isText(l) && l.url===u.href)){ toast("Ese enlace ya está guardado"); return }
       const pv = liveUrl===u.href ? livePv : null;
       const now = Date.now();
-      links.unshift({id:newId(), url:u.href, title:$("#t").value.trim(), note:$("#n").value.trim(), createdAt:now, updatedAt:now, ...(pv?{preview:pv}:{})});
+      links.unshift({id:newId(), url:u.href, title:$("#t").value.trim(), note:$("#n").value.trim(), createdAt:now, updatedAt:now, ...ttlFields(now), ...(pv?{preview:pv}:{})});
       $("#url").value = $("#t").value = $("#n").value = ""; liveUrl = livePv = null; drawLive();
       toast("Enlace guardado");
     }
+    const burnt = $("#ttl").value; $("#ttl").value = "";
+    if(burnt) setTimeout(() => toast(burnt==="burn" ? "Guardado. Se borrará al copiarlo o compartirlo." : "Guardado. Se borrará solo cuando acabe el tiempo."), 1950);
     sortLinks(); save(); openShare = openDel = null;
     $("#hint").textContent = HINT[mode];
     render(); fillMissing();
@@ -545,16 +599,19 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
     const b = e.target.closest("[data-act]"); if(!b) return;
     const id = b.closest(".card").dataset.id, l = visible().find(x=>x.id===id); if(!l) return;
     const act = b.dataset.act;
-    if(act==="copy") copy(shareText(l), b, isText(l) ? "Texto copiado" : "Contenido copiado");
-    else if(act==="copylink") copy(l.url, b, "Enlace copiado");
-    else if(act==="copymsg") copy(shareText(l), b, "Copiado, pégalo donde quieras");
+    if(act==="copy" || act==="copylink" || act==="copymsg"){
+      const ok = await copy(act==="copylink" ? l.url : shareText(l), b,
+        l.burn && !l.example ? "Copiado. Se ha autodestruido." : act==="copylink" ? "Enlace copiado" : act==="copymsg" ? "Copiado, pégalo donde quieras" : isText(l) ? "Texto copiado" : "Contenido copiado");
+      if(ok) burnIfNeeded(l);
+    }
+    else if(act==="sharelink"){ setTimeout(() => { if(burnIfNeeded(l)) toast("Compartido. Se ha autodestruido.") }, 400) }
     else if(act==="more"){ expanded.has(id) ? expanded.delete(id) : expanded.add(id); render() }
     else if(act==="share"){
       // En el móvil abre el menú de compartir del sistema
       if(navigator.share && matchMedia("(pointer:coarse)").matches){
         const data = isText(l) ? {text:l.text, ...(l.title?{title:l.title}:{})}
                                : {title:titleOf(l), text:[titleOf(l), l.note].filter(Boolean).join("\n"), url:l.url};
-        try{ await navigator.share(data); return }
+        try{ await navigator.share(data); if(burnIfNeeded(l)) toast("Compartido. Se ha autodestruido."); return }
         catch(err){ if(err && err.name==="AbortError") return }
       }
       openShare = openShare===id?null:id; openDel=null; render();
@@ -582,10 +639,10 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
         const createdAt = Number(d?.createdAt)||Date.now();
         if(d?.type==="text"){
           const text = String(d.text||""); if(!text.trim() || haveText.has(text)) continue;
-          links.push({id:newId(), type:"text", text, title:String(d.title||""), createdAt, updatedAt:Date.now()}); haveText.add(text); n++;
+          links.push({id:newId(), type:"text", text, title:String(d.title||""), createdAt, updatedAt:Date.now(), ...importTtl(d)}); haveText.add(text); n++;
         } else {
           const u = normalize(d?.url); if(!u || haveUrl.has(u.href)) continue;
-          links.push({id:newId(), url:u.href, title:String(d.title||""), note:String(d.note||""), createdAt, updatedAt:Date.now()}); haveUrl.add(u.href); n++;
+          links.push({id:newId(), url:u.href, title:String(d.title||""), note:String(d.note||""), createdAt, updatedAt:Date.now(), ...importTtl(d)}); haveUrl.add(u.href); n++;
         }
       }
       sortLinks(); save(); render(); fillMissing();
@@ -647,7 +704,7 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
       const merged = merge(remote, links);
       const out = payload(merged);
       if(out !== payload(remote)) await gh("/gists/" + sync.gistId, {method:"PATCH", body:JSON.stringify({files:{[FILE]:{content:out}}})});
-      links = merge(merged, links); sortLinks(); saveLocal(); render(); fillMissing();
+      links = merge(merged, links); sortLinks(); saveLocal(); purgeExpired(); render(); fillMissing();
       sync.last = Date.now(); saveSync(); setSyncState("ok");
     }catch(e){
       if(e.status===401) setSyncState("error", "GitHub ya no acepta el código de este dispositivo. Desconéctalo y conéctalo de nuevo con un código válido.");
@@ -764,7 +821,9 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
 
   // ---------- arranque ----------
   links = load().map(l => l.updatedAt ? l : {...l, updatedAt: l.createdAt || Date.now()});
-  sortLinks(); render(); fillMissing();
+  sortLinks(); purgeExpired(); render(); fillMissing();
+  setInterval(() => { const n = purgeExpired(); if(!document.hidden && (n || alive().some(l => l.expiresAt))) render() }, 30000);   // borra lo caducado y actualiza la cuenta atrás
+  document.addEventListener("visibilitychange", () => { if(!document.hidden && purgeExpired()) render() });
   setSyncState(sync ? "ok" : "off");
   const m = location.hash.match(/^#conectar=(.+)$/);
   if(m){
