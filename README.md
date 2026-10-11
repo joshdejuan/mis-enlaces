@@ -4,5 +4,6 @@ Guarda enlaces con vista previa (imagen, título y descripción) y textos para c
 
 Abre la app: https://joshdejuan.github.io/mis-enlaces/
 
-- Los enlaces se guardan solo en tu navegador. Usa **Exportar** e **Importar** para pasarlos a otro dispositivo.
+- Lo guardado vive en tu navegador. Con **Sincronizar** se mantiene igual en todos tus dispositivos a través de un gist secreto de tu cuenta de GitHub (necesita un token con el permiso «gist»).
+- **Exportar** e **Importar** sirven como copia de seguridad.
 - Las vistas previas vienen del servicio gratuito Microlink (unas 50 al día).

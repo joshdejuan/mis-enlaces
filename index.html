@@ -122,6 +122,22 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
 .section-label{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:4px 0 -4px}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:99px;font-size:14px;font-weight:500;opacity:0;pointer-events:none;transition:.2s;max-width:calc(100% - 32px);z-index:9}
 .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* Sincronización */
+.syncbtn .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+.syncbtn[data-state="ok"] .dot{background:var(--ok)}
+.syncbtn[data-state="busy"] .dot{background:var(--accent)}
+.syncbtn[data-state="error"] .dot{background:var(--danger)}
+.syncp{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px}
+.syncp .inner{display:grid;gap:10px}
+.syncp h2{font-family:var(--f-display);font-size:18px;margin:0}
+.syncp p,.syncp ol{margin:0;color:var(--muted);font-size:14px;max-width:65ch}
+.syncp ol{padding-left:20px;display:grid;gap:4px}
+.syncp b{color:var(--ink);font-weight:600}
+.syncp a{color:var(--accent)}
+.syncp code{font-family:var(--f-mono);font-size:12.5px;color:var(--ink)}
+.syncp .rowb{display:flex;gap:8px;flex-wrap:wrap}
+#token{font-family:var(--f-mono);font-size:13px}
 </style>
 </head>
 <body>
@@ -130,11 +146,39 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
     <h1>Mis <span>Enlaces</span></h1>
     <div class="hdr-r">
       <span class="count" id="count">0 guardados</span>
+      <button class="btn small syncbtn" id="syncBtn" data-state="off" aria-controls="syncPanel" aria-expanded="false"><span class="dot"></span><span id="syncLabel">Sincronizar</span></button>
       <button class="btn small" id="export" title="Descarga una copia de lo guardado">Exportar</button>
       <label class="btn small" for="import" title="Recupera desde una copia">Importar</label>
       <input type="file" id="import" accept="application/json,.json" hidden>
     </div>
   </header>
+
+  <section class="syncp" id="syncPanel" hidden>
+    <div class="inner" id="syncOff">
+      <h2>Sincroniza tus dispositivos</h2>
+      <p>Tu lista se guarda en un gist secreto de tu cuenta de GitHub y se mantiene igual en todos los dispositivos donde la conectes. Solo hay que hacerlo una vez en cada uno.</p>
+      <ol>
+        <li>Abre <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=Mis%20Enlaces" target="_blank" rel="noopener noreferrer">esta página de GitHub</a>. Ya viene configurada con el único permiso necesario, «gist».</li>
+        <li>En «Expiration» elige <b>No expiration</b> y pulsa <b>Generate token</b> al final de la página.</li>
+        <li>Copia el código que empieza por <code>ghp_</code> y pégalo aquí. Guárdalo: en tus otros dispositivos usarás el mismo.</li>
+      </ol>
+      <input id="token" type="password" placeholder="ghp_…" autocomplete="off" spellcheck="false" aria-label="Código de GitHub">
+      <div class="rowb">
+        <button class="btn primary" id="connect" type="button">Conectar</button>
+        <button class="btn" type="button" data-close>Cerrar</button>
+      </div>
+      <p class="hint" id="syncHint"></p>
+    </div>
+    <div class="inner" id="syncOn" hidden>
+      <h2>Sincronización activada</h2>
+      <p id="syncInfo"></p>
+      <div class="rowb">
+        <button class="btn" id="syncNow" type="button">Sincronizar ahora</button>
+        <button class="btn danger" id="disconnect" type="button">Desconectar este dispositivo</button>
+        <button class="btn" type="button" data-close>Cerrar</button>
+      </div>
+    </div>
+  </section>
 
   <form class="add" id="form" autocomplete="off">
     <div class="seg" role="group" aria-label="Qué quieres guardar">
@@ -362,13 +406,14 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
       ${panels(l)}
     </article>`;
   }
-  const visible = () => links.length ? links : EXAMPLES;
+  const alive = () => links.filter(l => !l.deleted);
+  const visible = () => alive().length ? alive() : EXAMPLES;
   function render(){
-    const q = $("#q").value.trim().toLowerCase(), real = links.length>0;
+    const q = $("#q").value.trim().toLowerCase(), n = alive().length, real = n>0;
     const shown = visible().filter(l =>
       (filter==="all" || (filter==="text") === isText(l)) &&
       (!q || [titleOf(l), l.text, l.preview?.description, l.note, l.url].join(" ").toLowerCase().includes(q)));
-    $("#count").textContent = `${links.length} ${links.length===1?"guardado":"guardados"}`;
+    $("#count").textContent = `${n} ${n===1?"guardado":"guardados"}`;
     let html = "";
     if(!real) html += `<div class="empty"><strong>Aún no has guardado nada</strong>Pega un enlace o un texto arriba y pulsa «Guardar». Debajo tienes ejemplos para probar los botones.</div><div class="section-label">Ejemplos</div>`;
     if(!shown.length && (real || filter!=="all" || q)) html += `<div class="empty"><strong>Sin resultados</strong>${q?`Nada coincide con «${esc(q)}».`:filter==="text"?"Todavía no has guardado textos.":"Todavía no has guardado enlaces."}</div>`;
@@ -433,7 +478,8 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
   ["#t","#n"].forEach(s=>$(s).addEventListener("input",()=>drawLive(false)));
 
   // ---------- almacenamiento ----------
-  function save(){ try{ localStorage.setItem(LS, JSON.stringify(links)) }catch{ toast("No se pudo guardar en este navegador") } }
+  function saveLocal(){ try{ localStorage.setItem(LS, JSON.stringify(links)) }catch{ toast("No se pudo guardar en este navegador") } }
+  function save(){ saveLocal(); scheduleSync() }
   function load(){ try{ const v = JSON.parse(localStorage.getItem(LS)||"[]"); return Array.isArray(v)?v:[] }catch{ return [] } }
   const sortLinks = () => links.sort((a,b)=>b.createdAt-a.createdAt);
   const newId = () => Date.now().toString(36)+Math.random().toString(36).slice(2,7);
@@ -444,15 +490,17 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
     if(mode==="text"){
       const text = $("#body").value.replace(/\s+$/,"");
       if(!text.trim()) return err("Escribe o pega el texto que quieres guardar.", $("#body"));
-      links.unshift({id:newId(), type:"text", text, title:$("#t").value.trim(), createdAt:Date.now()});
+      const now = Date.now();
+      links.unshift({id:newId(), type:"text", text, title:$("#t").value.trim(), createdAt:now, updatedAt:now});
       $("#body").value = ""; $("#t").value = "";
       toast("Texto guardado");
     } else {
       const u = normalize($("#url").value);
       if(!u) return err("Eso no parece un enlace. Si es un texto, cambia a «Texto».", $("#url"));
-      if(links.some(l=>l.url===u.href)){ toast("Ese enlace ya está guardado"); return }
+      if(alive().some(l=>!isText(l) && l.url===u.href)){ toast("Ese enlace ya está guardado"); return }
       const pv = liveUrl===u.href ? livePv : null;
-      links.unshift({id:newId(), url:u.href, title:$("#t").value.trim(), note:$("#n").value.trim(), createdAt:Date.now(), ...(pv?{preview:pv}:{})});
+      const now = Date.now();
+      links.unshift({id:newId(), url:u.href, title:$("#t").value.trim(), note:$("#n").value.trim(), createdAt:now, updatedAt:now, ...(pv?{preview:pv}:{})});
       $("#url").value = $("#t").value = $("#n").value = ""; liveUrl = livePv = null; drawLive();
       toast("Enlace guardado");
     }
@@ -488,12 +536,12 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
     }
     else if(act==="del"){ openDel=id; openShare=null; render() }
     else if(act==="delno"){ openDel=null; render() }
-    else if(act==="delyes"){ links = links.filter(x=>x.id!==id); openDel=null; save(); render(); toast(isText(l)?"Texto borrado":"Enlace borrado") }
+    else if(act==="delyes"){ links = links.map(x => x.id===id ? {id, deleted:true, createdAt:x.createdAt, updatedAt:Date.now()} : x); openDel=null; save(); render(); toast(isText(l)?"Texto borrado":"Enlace borrado") }
   });
 
   // ---------- exportar / importar ----------
   $("#export").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(links,null,2)], {type:"application/json"});
+    const blob = new Blob([JSON.stringify(alive().map(({noPreview,...x})=>x),null,2)], {type:"application/json"});
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
     a.download = `mis-enlaces-${new Date().toISOString().slice(0,10)}.json`; a.click();
     setTimeout(()=>URL.revokeObjectURL(a.href), 1000);
@@ -502,17 +550,17 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
     const f = e.target.files[0]; e.target.value = ""; if(!f) return;
     try{
       const data = JSON.parse(await f.text()); if(!Array.isArray(data)) throw 0;
-      const haveUrl = new Set(links.filter(l=>!isText(l)).map(l=>l.url));
-      const haveText = new Set(links.filter(isText).map(l=>l.text));
+      const haveUrl = new Set(alive().filter(l=>!isText(l)).map(l=>l.url));
+      const haveText = new Set(alive().filter(isText).map(l=>l.text));
       let n = 0;
       for(const d of data){
         const createdAt = Number(d?.createdAt)||Date.now();
         if(d?.type==="text"){
           const text = String(d.text||""); if(!text.trim() || haveText.has(text)) continue;
-          links.push({id:newId(), type:"text", text, title:String(d.title||""), createdAt}); haveText.add(text); n++;
+          links.push({id:newId(), type:"text", text, title:String(d.title||""), createdAt, updatedAt:Date.now()}); haveText.add(text); n++;
         } else {
           const u = normalize(d?.url); if(!u || haveUrl.has(u.href)) continue;
-          links.push({id:newId(), url:u.href, title:String(d.title||""), note:String(d.note||""), createdAt}); haveUrl.add(u.href); n++;
+          links.push({id:newId(), url:u.href, title:String(d.title||""), note:String(d.note||""), createdAt, updatedAt:Date.now()}); haveUrl.add(u.href); n++;
         }
       }
       sortLinks(); save(); render(); fillMissing();
@@ -520,8 +568,131 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
     }catch{ toast("Ese archivo no es una copia de Mis Enlaces") }
   });
 
+  // ---------- sincronización con GitHub (gist secreto) ----------
+  const SK = "mis-enlaces-sync", FILE = "mis-enlaces.json";
+  let sync = (() => { try{ const v = JSON.parse(localStorage.getItem(SK)||"null"); return v && v.token && v.gistId ? v : null }catch{ return null } })();
+  const saveSync = () => { try{ sync ? localStorage.setItem(SK, JSON.stringify(sync)) : localStorage.removeItem(SK) }catch{} };
+  let syncState = "off", syncMsg = "";
+
+  async function gh(path, opts={}, token=sync?.token){
+    const r = await fetch("https://api.github.com" + path, {...opts, cache:"no-store", headers:{
+      Authorization:"Bearer " + token, Accept:"application/vnd.github+json",
+      ...(opts.body ? {"Content-Type":"application/json"} : {})}});
+    if(!r.ok){ const e = new Error("GitHub " + r.status); e.status = r.status; throw e }
+    return r.status===204 ? null : r.json();
+  }
+  const stamp = x => x.updatedAt || x.createdAt || 0;
+  function merge(a, b){
+    const m = new Map();
+    for(const x of [...a, ...b]){
+      if(!x || !x.id) continue;
+      const y = m.get(x.id);
+      if(!y || stamp(x) > stamp(y) || (stamp(x)===stamp(y) && x.preview && !y.preview)) m.set(x.id, x);
+    }
+    const cutoff = Date.now() - 90*864e5;   // las marcas de borrado se olvidan a los 90 días
+    return [...m.values()].filter(x => !(x.deleted && stamp(x) < cutoff));
+  }
+  const payload = items => JSON.stringify({app:"mis-enlaces", version:1,
+    items: items.map(({noPreview, ...x}) => x).sort((a,b) => a.id < b.id ? -1 : 1)});
+  async function readRemote(){
+    const g = await gh("/gists/" + sync.gistId), f = g.files?.[FILE];
+    if(!f) return [];
+    let txt = f.content;
+    if(f.truncated) txt = await (await fetch(f.raw_url, {cache:"no-store"})).text();
+    try{ const d = JSON.parse(txt||"{}"); return Array.isArray(d.items) ? d.items : [] }catch{ return [] }
+  }
+  async function findGist(token){
+    for(let page=1; page<=10; page++){
+      const list = await gh(`/gists?per_page=100&page=${page}`, {}, token);
+      const g = list.find(g => g.files && g.files[FILE]);
+      if(g) return g.id;
+      if(list.length < 100) break;
+    }
+    return null;
+  }
+
+  let syncing = false, again = false, syncTimer;
+  function scheduleSync(){ if(!sync) return; clearTimeout(syncTimer); syncTimer = setTimeout(doSync, 1500) }
+  async function doSync(){
+    if(!sync) return;
+    if(syncing){ again = true; return }
+    syncing = true; setSyncState("busy");
+    try{
+      const remote = await readRemote();
+      const merged = merge(remote, links);
+      const out = payload(merged);
+      if(out !== payload(remote)) await gh("/gists/" + sync.gistId, {method:"PATCH", body:JSON.stringify({files:{[FILE]:{content:out}}})});
+      links = merge(merged, links); sortLinks(); saveLocal(); render(); fillMissing();
+      sync.last = Date.now(); saveSync(); setSyncState("ok");
+    }catch(e){
+      if(e.status===401) setSyncState("error", "GitHub ya no acepta el código de este dispositivo. Desconéctalo y conéctalo de nuevo con un código válido.");
+      else if(e.status===404) setSyncState("error", "No se encuentra el gist de sincronización en tu cuenta. Desconecta este dispositivo y vuelve a conectarlo.");
+      else setSyncState("error", "No se pudo sincronizar. Lo intentaré de nuevo cuando vuelva la conexión.");
+    }finally{
+      syncing = false;
+      if(again){ again = false; doSync() }
+    }
+  }
+
+  function setSyncState(state, msg=""){
+    syncState = state; syncMsg = msg;
+    const b = $("#syncBtn"); b.dataset.state = sync ? state : "off";
+    $("#syncLabel").textContent = !sync ? "Sincronizar" : ({busy:"Sincronizando…", ok:"Sincronizado", error:"Sin sincronizar"}[state] || "Sincronizado");
+    $("#syncOff").hidden = !!sync; $("#syncOn").hidden = !sync;
+    if(sync){
+      const when = sync.last ? new Date(sync.last).toLocaleString("es-ES",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}) : "todavía no";
+      $("#syncInfo").textContent = `Conectado a GitHub como @${sync.login||"?"}. Última sincronización: ${when}.` + (msg ? " " + msg : "") +
+        " Los cambios se sincronizan solos al guardar o borrar, y al volver a abrir la app.";
+    }
+  }
+  function togglePanel(open){
+    const p = $("#syncPanel"); p.hidden = !open; $("#syncBtn").setAttribute("aria-expanded", open);
+    if(open && !sync) $("#token").focus();
+  }
+  $("#syncBtn").addEventListener("click", () => togglePanel($("#syncPanel").hidden));
+  document.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => togglePanel(false)));
+  $("#syncNow").addEventListener("click", doSync);
+  $("#disconnect").addEventListener("click", () => {
+    sync = null; saveSync(); setSyncState("off"); togglePanel(false);
+    toast("Este dispositivo ya no se sincroniza. Tu lista se queda aquí.");
+  });
+  $("#connect").addEventListener("click", async () => {
+    const token = $("#token").value.trim(), h = $("#syncHint");
+    h.classList.remove("err");
+    if(!/^(gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}$/.test(token)){ h.textContent = "Pega el código completo de GitHub; empieza por ghp_."; h.classList.add("err"); return }
+    const btn = $("#connect"); btn.disabled = true; h.textContent = "Conectando…";
+    try{
+      const user = await gh("/user", {}, token);
+      let id = await findGist(token);
+      if(!id){
+        const g = await gh("/gists", {method:"POST", body:JSON.stringify({
+          description:"Mis Enlaces · sincronización (no lo borres)", public:false,
+          files:{[FILE]:{content:payload(links)}}})}, token);
+        id = g.id;
+      }
+      sync = {token, gistId:id, login:user.login, last:0}; saveSync();
+      $("#token").value = ""; h.textContent = "";
+      await doSync();
+      toast(syncState==="ok" ? "Sincronización activada" : "Conectado, pero no se pudo sincronizar todavía");
+    }catch(e){
+      h.textContent = e.status===401 ? "GitHub no reconoce ese código. Comprueba que lo copiaste entero."
+        : (e.status===403 || e.status===404) ? "Ese código no tiene permiso para gists. Créalo de nuevo desde el enlace de arriba, que ya marca «gist»."
+        : "No se pudo conectar con GitHub. Revisa tu conexión e inténtalo otra vez.";
+      h.classList.add("err");
+    }finally{ btn.disabled = false }
+  });
+  $("#token").addEventListener("keydown", e => { if(e.key==="Enter"){ e.preventDefault(); $("#connect").click() } });
+
+  // Trae cambios de otros dispositivos al volver a la app
+  let lastPull = 0;
+  function pull(){ if(sync && Date.now()-lastPull > 15000){ lastPull = Date.now(); doSync() } }
+  document.addEventListener("visibilitychange", () => { if(document.visibilityState==="visible") pull() });
+  addEventListener("online", pull);
+
   // ---------- arranque ----------
-  links = load(); sortLinks(); render(); fillMissing();
+  links = load().map(l => l.updatedAt ? l : {...l, updatedAt: l.createdAt || Date.now()});
+  sortLinks(); render(); fillMissing();
+  setSyncState(sync ? "ok" : "off"); pull();
 })();
 </script>
 </body>
