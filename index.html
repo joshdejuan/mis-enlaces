@@ -138,6 +138,14 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
 .syncp code{font-family:var(--f-mono);font-size:12.5px;color:var(--ink)}
 .syncp .rowb{display:flex;gap:8px;flex-wrap:wrap}
 #token{font-family:var(--f-mono);font-size:13px}
+.tokrow{display:flex;gap:8px}
+.tokrow input{flex:1;min-width:0}
+.syncp .tip{font-size:13px}
+.pair{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;border-top:1px solid var(--line);padding-top:14px}
+.qr{background:#fff;padding:10px;border-radius:10px;border:1px solid var(--line);width:200px;max-width:100%;aspect-ratio:1;display:grid;place-items:center;color:#5B6678;font-size:13px;text-align:center}
+.qr svg,.qr img{width:100%;height:auto;display:block}
+.pair-txt{flex:1 1 240px;min-width:0;display:grid;gap:8px}
+.syncp .warn{color:var(--danger);font-size:13px}
 </style>
 </head>
 <body>
@@ -162,7 +170,11 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
         <li>En «Expiration» elige <b>No expiration</b> y pulsa <b>Generate token</b> al final de la página.</li>
         <li>Copia el código que empieza por <code>ghp_</code> y pégalo aquí. Guárdalo: en tus otros dispositivos usarás el mismo.</li>
       </ol>
-      <input id="token" type="password" placeholder="ghp_…" autocomplete="off" spellcheck="false" aria-label="Código de GitHub">
+      <div class="tokrow">
+        <input id="token" type="password" placeholder="ghp_…" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="Código de GitHub">
+        <button class="btn" type="button" id="showTok" aria-pressed="false">Ver</button>
+      </div>
+      <p class="tip">¿Ya lo conectaste en otro dispositivo? Allí, en este mismo panel, pulsa «Conectar otro dispositivo» y escanea el QR con este móvil. No tendrás que escribir nada.</p>
       <div class="rowb">
         <button class="btn primary" id="connect" type="button">Conectar</button>
         <button class="btn" type="button" data-close>Cerrar</button>
@@ -174,8 +186,21 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
       <p id="syncInfo"></p>
       <div class="rowb">
         <button class="btn" id="syncNow" type="button">Sincronizar ahora</button>
+        <button class="btn" id="pairBtn" type="button" aria-expanded="false">Conectar otro dispositivo</button>
         <button class="btn danger" id="disconnect" type="button">Desconectar este dispositivo</button>
         <button class="btn" type="button" data-close>Cerrar</button>
+      </div>
+      <div class="pair" id="pair" hidden>
+        <div class="qr" id="qr" aria-label="Código QR de conexión"></div>
+        <div class="pair-txt">
+          <p><b>Escanéalo con la cámara del otro dispositivo.</b> Se abrirá Mis Enlaces ya conectado, con tu lista.</p>
+          <p>También puedes enviarte el enlace o copiar solo el código y pegarlo allí en «Sincronizar».</p>
+          <div class="rowb">
+            <button class="btn" id="copyPair" type="button">Copiar enlace de conexión</button>
+            <button class="btn" id="copyTok" type="button">Copiar código</button>
+          </div>
+          <p class="warn">Este QR y este enlace dan acceso a tu lista: no los compartas con nadie.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -654,12 +679,18 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
   $("#syncNow").addEventListener("click", doSync);
   $("#disconnect").addEventListener("click", () => {
     sync = null; saveSync(); setSyncState("off"); togglePanel(false);
+    $("#pair").hidden = true; $("#qr").textContent = "";
     toast("Este dispositivo ya no se sincroniza. Tu lista se queda aquí.");
   });
-  $("#connect").addEventListener("click", async () => {
-    const token = $("#token").value.trim(), h = $("#syncHint");
+  // Limpia lo que se pega: espacios, saltos de línea, comillas y mayúscula inicial del teclado
+  const cleanToken = t => String(t||"").replace(/[\s"'`<>]/g,"").replace(/^(gh[pousr]_|github_pat_)/i, m => m.toLowerCase());
+  async function connectWith(raw){
+    const token = cleanToken(raw), h = $("#syncHint");
     h.classList.remove("err");
-    if(!/^(gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}$/.test(token)){ h.textContent = "Pega el código completo de GitHub; empieza por ghp_."; h.classList.add("err"); return }
+    if(!/^(gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}$/.test(token)){
+      h.textContent = token ? "Ese código no tiene el formato de GitHub: debe empezar por ghp_ y tener unos 40 caracteres. Pulsa «Ver» para revisarlo." : "Pega aquí el código de GitHub.";
+      h.classList.add("err"); return false;
+    }
     const btn = $("#connect"); btn.disabled = true; h.textContent = "Conectando…";
     try{
       const user = await gh("/user", {}, token);
@@ -674,13 +705,50 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
       $("#token").value = ""; h.textContent = "";
       await doSync();
       toast(syncState==="ok" ? "Sincronización activada" : "Conectado, pero no se pudo sincronizar todavía");
+      return true;
     }catch(e){
-      h.textContent = e.status===401 ? "GitHub no reconoce ese código. Comprueba que lo copiaste entero."
+      h.textContent = e.status===401 ? "GitHub no acepta ese código. Puede que falte o sobre algún carácter, o que se haya revocado. Pulsa «Ver» para comprobarlo, o conéctate con el QR desde tu otro dispositivo."
         : (e.status===403 || e.status===404) ? "Ese código no tiene permiso para gists. Créalo de nuevo desde el enlace de arriba, que ya marca «gist»."
         : "No se pudo conectar con GitHub. Revisa tu conexión e inténtalo otra vez.";
       h.classList.add("err");
+      return false;
     }finally{ btn.disabled = false }
+  }
+  $("#connect").addEventListener("click", () => connectWith($("#token").value));
+  $("#token").addEventListener("paste", () => setTimeout(() => { $("#token").value = cleanToken($("#token").value) }, 0));
+  $("#showTok").addEventListener("click", () => {
+    const i = $("#token"), show = i.type === "password";
+    i.type = show ? "text" : "password"; $("#showTok").textContent = show ? "Ocultar" : "Ver";
+    $("#showTok").setAttribute("aria-pressed", show);
   });
+
+  // Conectar otro dispositivo con QR o enlace (el código va tras #, nunca llega al servidor)
+  const pairLink = () => location.origin + location.pathname + "#conectar=" + encodeURIComponent(sync.token);
+  let qrLib;
+  function loadQrLib(){
+    if(window.qrcode) return Promise.resolve();
+    return qrLib ||= new Promise((ok, ko) => {
+      const sc = document.createElement("script");
+      sc.src = "https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js";
+      sc.onload = ok; sc.onerror = () => { qrLib = null; ko() };
+      document.head.appendChild(sc);
+    });
+  }
+  async function drawQr(){
+    const box = $("#qr"); box.textContent = "Generando…";
+    try{
+      await loadQrLib();
+      const q = qrcode(0, "M"); q.addData(pairLink()); q.make();
+      box.innerHTML = q.createSvgTag({cellSize:4, margin:0, scalable:true});
+    }catch{ box.textContent = "No se pudo generar el QR. Usa «Copiar enlace de conexión»." }
+  }
+  $("#pairBtn").addEventListener("click", () => {
+    const p = $("#pair"), open = p.hidden; p.hidden = !open;
+    $("#pairBtn").setAttribute("aria-expanded", open);
+    if(open) drawQr();
+  });
+  $("#copyPair").addEventListener("click", e => copy(pairLink(), e.currentTarget, "Enlace de conexión copiado"));
+  $("#copyTok").addEventListener("click", e => copy(sync.token, e.currentTarget, "Código copiado"));
   $("#token").addEventListener("keydown", e => { if(e.key==="Enter"){ e.preventDefault(); $("#connect").click() } });
 
   // Trae cambios de otros dispositivos al volver a la app
@@ -692,7 +760,14 @@ input::placeholder,textarea::placeholder{color:var(--muted);opacity:.8}
   // ---------- arranque ----------
   links = load().map(l => l.updatedAt ? l : {...l, updatedAt: l.createdAt || Date.now()});
   sortLinks(); render(); fillMissing();
-  setSyncState(sync ? "ok" : "off"); pull();
+  setSyncState(sync ? "ok" : "off");
+  const m = location.hash.match(/^#conectar=(.+)$/);
+  if(m){
+    history.replaceState(null, "", location.pathname + location.search);   // quita el código de la barra de direcciones
+    const tok = cleanToken(decodeURIComponent(m[1]));
+    if(sync && sync.token === tok) pull();
+    else { sync = null; saveSync(); setSyncState("off"); togglePanel(true); connectWith(tok).then(ok => { if(ok) togglePanel(false) }) }
+  } else pull();
 })();
 </script>
 </body>
