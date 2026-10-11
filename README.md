@@ -1,6 +1,6 @@
 # Mis Enlaces
 
-Guarda enlaces con vista previa (imagen, título y descripción), cópialos y compártelos en un toque.
+Guarda enlaces con vista previa (imagen, título y descripción) y textos para copiar y pegar. Cópialos y compártelos en un toque.
 
 Abre la app: https://joshdejuan.github.io/mis-enlaces/
 
